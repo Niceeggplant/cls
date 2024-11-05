@@ -15,6 +15,8 @@
 import paddle
 
 
+import paddle
+
 def load_dict(dict_path):
     vocab = {}
     i = 0
@@ -24,20 +26,9 @@ def load_dict(dict_path):
             i += 1
     return vocab
 
-
-def _trunc_sent(sents, max_seq_len):
-    while len(sents[0]) + len(sents[1]) >= max_seq_len - 2:
-        if len(sents[0]) >= len(sents[1]):
-            sents[0].pop(-1)
-        else:
-            sents[1].pop(-1)
-
-
-def convert_example(example, tokenizer, max_seq_len, tags_to_idx=None, summary_num=2, is_test=False):
+def convert_example(example, tokenizer, max_length, is_test=False):
     sents = example["input"]
-    _trunc_sent(sents, max_seq_len)
-    sents = list(sents[0]) + ["[SEP]"] + list(sents[1])
-    tokenized_input = tokenizer(sents, return_length=True, is_split_into_words="token", max_seq_len=max_seq_len)
+    tokenized_input = tokenizer(sents, return_length=True, is_split_into_words="token", max_length=max_length)
 
     if is_test:
         return tokenized_input["input_ids"], tokenized_input["token_type_ids"], tokenized_input["seq_len"]
@@ -51,7 +42,6 @@ def convert_example(example, tokenizer, max_seq_len, tags_to_idx=None, summary_n
         tokenized_input["tags"],
     )
 
-
 def create_dataloader(dataset, mode="train", batch_size=1, batchify_fn=None, trans_fn=None):
     if trans_fn:
         dataset = dataset.map(trans_fn)
@@ -64,7 +54,6 @@ def create_dataloader(dataset, mode="train", batch_size=1, batchify_fn=None, tra
 
     return paddle.io.DataLoader(dataset=dataset, batch_sampler=batch_sampler, collate_fn=batchify_fn, return_list=True)
 
-
 def read_custom_data(filename):
     """Reads data"""
     with open(filename, "r", encoding="utf-8") as f:
@@ -74,14 +63,13 @@ def read_custom_data(filename):
                 continue
             yield example
 
-
 def transfer_str_to_example(sample):
     items = sample.split("\t")
-    if len(items) != 3:
+    if len(items) != 2:
         return
-    print(items)
-    sents = [items[0], items[1]]
-    tag = items[2]
+    
+    sents = [items[0]]
+    tag = items[1]
 
     res = {
         "input": sents,
@@ -90,11 +78,9 @@ def transfer_str_to_example(sample):
 
     return res
 
-
 if __name__ == '__main__':
     import sys
     from paddlenlp.transformers import ErnieCtmTokenizer
-
     tokenizer = ErnieCtmTokenizer.from_pretrained("wordtag")
 
     test_data = sys.argv[1]

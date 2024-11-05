@@ -23,7 +23,6 @@ from sklearn.metrics import confusion_matrix
 import numpy as np
 import paddle
 from data_process_sim import convert_example, create_dataloader, load_dict, read_custom_data
-# from metric import SequenceAccuracy
 from paddlenlp.metrics import MultiLabelsMetric
 import paddle.nn as nn
 import paddle.nn.functional as F
@@ -46,7 +45,7 @@ def parse_args():
     parser.add_argument("--data_dir", default="./sim_data", type=str, help="The input data dir, should contain train.json.")
     parser.add_argument("--init_from_ckpt", default=None, type=str, help="The path of checkpoint to be loaded.")
     parser.add_argument("--output_dir", default="./output", type=str, help="The output directory where the model predictions and checkpoints will be written.",)
-    parser.add_argument("--max_seq_len", default=128, type=int, help="The maximum total input sequence length after tokenization. Sequences longer than this will be truncated, sequences shorter will be padded.", )
+    parser.add_argument("--max_length", default=128, type=int, help="The maximum total input sequence length after tokenization. Sequences longer than this will be truncated, sequences shorter will be padded.", )
     parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs", default=3, type=int, help="Total number of training epochs to perform.", )
     parser.add_argument("--logging_steps", type=int, default=5, help="Log every X updates steps.")
@@ -72,7 +71,7 @@ def set_seed(seed):
 
 
 @paddle.no_grad()
-def evaluate(model, metric, data_loader, tags_to_idx):
+def evaluate(model, metric, data_loader,tags_to_idx):
     logger.info("metric")
     model.eval()
     metric.reset()
@@ -119,7 +118,7 @@ def do_train(args):
     tags_to_idx = load_dict(os.path.join(args.data_dir, "tags.txt")) # 标签字典构建，从文件读入，分类任务可能不需要，看情况删减
     tokenizer = ErnieCtmTokenizer.from_pretrained("wordtag") # tokenizer构建，不能改，原因是需要与预训练模型使用分词保持一致
     model = ErnieCtmForTokenClassification.from_pretrained('ernie-ctm', num_labels=len(tags_to_idx))  # 模型加载，模型 = ErnieCtmForTokenClassification.from_pretrained("wordtag", num_labels=5)  # 模型加载，
-    trans_func = partial(convert_example, num_labels=len(tags_to_idx), tokenizer=tokenizer, max_seq_len=args.max_seq_len, tags_to_idx=tags_to_idx)  # partial仅做易用性优化，主体逻辑依旧在预处理中
+    trans_func = partial(convert_example, tokenizer=tokenizer, max_length=args.max_length)  # partial仅做易用性优化，主体逻辑依旧在预处理中
     def batchify_fn(samples): # 分批代码，需要与trans_func中结果对应，联动预处理过程
         fn = Tuple(
             Pad(axis=0, pad_val=tokenizer.pad_token_id, dtype="int64"),  # input_ids
@@ -147,7 +146,6 @@ def do_train(args):
         model = paddle.DataParallel(model)
 
     num_training_steps = len(train_data_loader) * args.num_train_epochs # 总训练步数
-    print("num_training_steps",num_training_steps)
     warmup = args.warmup_steps if args.warmup_steps > 0 else args.warmup_proportion # 预热步数
     lr_scheduler = LinearDecayWithWarmup(args.learning_rate, num_training_steps, warmup) # 学习率控制器
 
@@ -175,10 +173,14 @@ def do_train(args):
 
         for total_step, batch in enumerate(train_data_loader):
             global_step += 1
-            print("batch",batch)    
             input_ids, token_type_ids, seq_len, tags = batch
-            loss = model(input_ids, token_type_ids, labels=tags)[0] 
-        
+            # logits [batch_size,tags] loss [batch_size,max_seq,768]
+            # tags [batch_size,max_seq] [32,1]
+            
+            logits,loss = model(input_ids, token_type_ids, tags)[:2] 
+            print("loss",loss)
+            print("logit",logits)
+            print("tags",tags)
             loss = loss.mean()
             total_loss += loss
             loss.backward()
