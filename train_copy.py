@@ -46,14 +46,14 @@ def parse_args():
     parser.add_argument("--init_from_ckpt", default=None, type=str, help="The path of checkpoint to be loaded.")
     parser.add_argument("--output_dir", default="./output", type=str, help="The output directory where the model predictions and checkpoints will be written.",)
     parser.add_argument("--max_length", default=128, type=int, help="The maximum total input sequence length after tokenization. Sequences longer than this will be truncated, sequences shorter will be padded.", )
-    parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
+    parser.add_argument("--learning_rate", default=5e-4, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs", default=3, type=int, help="Total number of training epochs to perform.", )
-    parser.add_argument("--logging_steps", type=int, default=5, help="Log every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=2, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=100, help="Save checkpoint every X updates steps.")
-    parser.add_argument("--batch_size", default=32, type=int, help="Batch size per GPU/CPU for training.", )
+    parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU/CPU for training.", )
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps. If > 0: Override warmup_proportion")
-    parser.add_argument("--warmup_proportion", default=0.0, type=float, help="Linear warmup proportion over total steps.")
+    parser.add_argument("--warmup_proportion", default=0.1, type=float, help="Linear warmup proportion over total steps.")
     parser.add_argument("--adam_epsilon", default=1e-6, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument("--seed", default=1000, type=int, help="random seed for initialization")
     parser.add_argument("--device", default="cpu", type=str, help="The device to select to train the model, is must be cpu/gpu/xpu.")
@@ -78,10 +78,11 @@ def evaluate(model, metric, data_loader,tags_to_idx):
     losses = []
     all_predictions = []
     all_labels = []
-    
+   
+   
     for batch in data_loader():
         input_ids, token_type_ids, seq_len ,tags  = batch
-        logits, loss = model(input_ids, token_type_ids, tags)[:2]
+        loss,logits = model(input_ids, token_type_ids, tags)[:2]
         loss = loss.mean()
         losses.append(loss.numpy())
         pred = logits.reshape([-1, len(tags_to_idx)])  
@@ -97,8 +98,7 @@ def evaluate(model, metric, data_loader,tags_to_idx):
     print(cm)
     precision, recall, f1_score = metric.accumulate(average=None)
     print("precision, recall, f1_score ", precision, recall, f1_score)
-    logger.info("eval loss: %.5f, f1_scores: %s" % (np.mean(losses), str(f1_score)))
-
+   
     model.train()
     metric.reset()
 
@@ -174,13 +174,11 @@ def do_train(args):
         for total_step, batch in enumerate(train_data_loader):
             global_step += 1
             input_ids, token_type_ids, seq_len, tags = batch
-            # logits [batch_size,tags] loss [batch_size,max_seq,768]
+            # loss [batch_size,tags] logit [batch_size,max_seq,768]
             # tags [batch_size,max_seq] [32,1]
             
-            logits,loss = model(input_ids, token_type_ids, tags)[:2] 
+            loss = model(input_ids, token_type_ids, tags)[0]
             print("loss",loss)
-            print("logit",logits)
-            print("tags",tags)
             loss = loss.mean()
             total_loss += loss
             loss.backward()
@@ -196,6 +194,7 @@ def do_train(args):
                     "global step %d, epoch: %d, loss: %.5f, speed: %.2f step/s"
                     % (global_step, epoch, total_loss / args.logging_steps, speed)
                 )
+                print("loss",loss)
                 start_time = time.time()
                 total_loss = 0
 

@@ -91,9 +91,9 @@ def evaluate(model, metric, data_loader,tags, tags_to_idx):
         args = metric.compute(pred, label)
         metric.update(args)  # 更新累积度
 
-    # precision, recall, f1_score = metric.accumulate(average=None)
-    # print("precision, recall, f1_score ", precision, recall, f1_score)
-    # logger.info("eval loss: %.5f, f1_scores: %s" % (np.mean(losses), str(f1_score)))
+    precision, recall, f1_score = metric.accumulate(average=None)
+    print("precision, recall, f1_score ", precision, recall, f1_score)
+    logger.info("eval loss: %.5f, f1_scores: %s" % (np.mean(losses), str(f1_score)))
 
     model.train()
     metric.reset()
@@ -118,7 +118,6 @@ def do_train(args):
     tokenizer = ErnieCtmTokenizer.from_pretrained("wordtag") # tokenizer构建，不能改，原因是需要与预训练模型使用分词保持一致
     # model = ErnieCtmWordtagModel.from_pretrained("wordtag", num_labels=len(tags_to_idx))  # 模型加载，模型结构是在ErnieCtmWordtagModel中指定的，与model联动
     model = ErnieCtmForTokenClassification.from_pretrained('ernie-ctm', num_labels=len(tags_to_idx))  # 模型加载，模型 = ErnieCtmForTokenClassification.from_pretrained("wordtag", num_labels=5)  # 模型加载，
-
 
     trans_func = partial(convert_example, tokenizer=tokenizer, max_seq_len=args.max_seq_len, tags_to_idx=tags_to_idx)  # partial仅做易用性优化，主体逻辑依旧在预处理中
     def batchify_fn(samples): # 分批代码，需要与trans_func中结果对应，联动预处理过程
