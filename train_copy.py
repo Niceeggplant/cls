@@ -85,16 +85,12 @@ def evaluate(model, metric, data_loader,tags_to_idx):
     for batch in data_loader():
         input_ids, token_type_ids, seq_len ,tags  = batch
         loss,logits = model(input_ids, token_type_ids, tags)[:2]
-        print("logit",logits.shape)
-        print("loss",loss.shape)
-        print("tags",tags)
         loss = loss.mean()
         losses.append(loss.numpy())
         label = tags.reshape([-1])
-        print("label",label.shape)
-        pred = loss.reshape([-1, len(tags_to_idx)])  
-        
-        print("pred",pred.shape)
+    
+        pred = logits.reshape([-1, len(tags_to_idx)])  
+   
         
 
         softmax_pred = F.softmax(pred, axis=-1)
