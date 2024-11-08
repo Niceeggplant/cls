@@ -841,11 +841,12 @@ class ErnieCtmForTokenClassification(ErnieCtmPretrainedModel):
         pooled_output = output[1] 
         pooled_output = self.dropout(pooled_output) 
         logits = self.classifier(pooled_output)
-        
+
         loss = None
         if labels is not None: # 如果标签数据存在，计算损失函数
-            loss_fct = nn.CrossEntropyLoss()  # 忽略无效标签
-            loss = loss_fct(logits, labels) # 计算损失函数
+            #loss_fct = nn.CrossEntropyLoss()  # 忽略无效标签
+            loss = F.softmax_with_cross_entropy(logits, labels) # 计算损失函数
+            print("loss",loss)
         if not return_dict:
             output = (logits,) + output[2:] # 将模型输出和损失函数组合成元组
             return ((loss,) + output) if loss is not None else (output[0] if len(output) == 1 else output)

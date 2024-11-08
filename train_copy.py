@@ -78,30 +78,19 @@ def evaluate(model, metric, data_loader,tags_to_idx):
     model.eval()
     metric.reset()
     losses = []
-    all_predictions = []
-    all_labels = []
    
    
     for batch in data_loader():
         input_ids, token_type_ids, seq_len ,tags  = batch
-        loss,logits = model(input_ids, token_type_ids, tags)[:2]
+        logits,loss = model(input_ids, token_type_ids, tags)[:2]
         loss = loss.mean()
         losses.append(loss.numpy())
         label = tags.reshape([-1])
-    
         pred = logits.reshape([-1, len(tags_to_idx)])  
-   
-        
-
-        softmax_pred = F.softmax(pred, axis=-1)
-        predictions= paddle.argmax(softmax_pred, axis=-1)
+        print(label,pred)
         args=metric.compute(pred,label)
         metric.update(args) # 更新累积度
-        all_predictions.extend(predictions.numpy())
-        all_labels.extend(label.numpy())
         
-    cm = confusion_matrix(all_labels, all_predictions)
-    print(cm)
     precision, recall, f1_score = metric.accumulate(average=None)
     print("precision, recall, f1_score ", precision, recall, f1_score)
    
@@ -180,7 +169,7 @@ def do_train(args):
         for total_step, batch in enumerate(train_data_loader):
             global_step += 1
             input_ids, token_type_ids, seq_len, tags = batch
-            # loss [batch_size,tags] logit [batch_size,max_seq,768]
+            # logit [batch_size,tags] loss [batch_size,max_seq,768]
             # tags [batch_size,max_seq] [32,1]
             
             loss = model(input_ids, token_type_ids, labels=tags)[0]
