@@ -15,8 +15,6 @@
 import paddle
 
 
-import paddle
-
 def load_dict(dict_path):
     vocab = {}
     i = 0

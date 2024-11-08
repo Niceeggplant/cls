@@ -840,7 +840,6 @@ class ErnieCtmForTokenClassification(ErnieCtmPretrainedModel):
         )
         pooled_output = output[1] 
         pooled_output = self.dropout(pooled_output) 
-        # [batch_size, num_tags]
         logits = self.classifier(pooled_output)
         
         loss = None

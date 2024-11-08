@@ -31,7 +31,8 @@ from paddlenlp.data import Pad, Stack, Tuple
 from paddlenlp.datasets import load_dataset
 from paddlenlp.transformers import (
     ErnieCtmTokenizer,
-    LinearDecayWithWarmup   
+    LinearDecayWithWarmup,
+    ErnieCtmForTokenClassification
 )
 from model import ErnieCtmForTokenClassification
 
@@ -50,7 +51,7 @@ def parse_args():
     parser.add_argument("--num_train_epochs", default=3, type=int, help="Total number of training epochs to perform.", )
     parser.add_argument("--logging_steps", type=int, default=2, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=100, help="Save checkpoint every X updates steps.")
-    parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU/CPU for training.", )
+    parser.add_argument("--batch_size", default=1, type=int, help="Batch size per GPU/CPU for training.", )
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps. If > 0: Override warmup_proportion")
     parser.add_argument("--warmup_proportion", default=0.1, type=float, help="Linear warmup proportion over total steps.")
@@ -73,6 +74,7 @@ def set_seed(seed):
 @paddle.no_grad()
 def evaluate(model, metric, data_loader,tags_to_idx):
     logger.info("metric")
+    
     model.eval()
     metric.reset()
     losses = []
@@ -83,10 +85,18 @@ def evaluate(model, metric, data_loader,tags_to_idx):
     for batch in data_loader():
         input_ids, token_type_ids, seq_len ,tags  = batch
         loss,logits = model(input_ids, token_type_ids, tags)[:2]
+        print("logit",logits.shape)
+        print("loss",loss.shape)
+        print("tags",tags)
         loss = loss.mean()
         losses.append(loss.numpy())
-        pred = logits.reshape([-1, len(tags_to_idx)])  
         label = tags.reshape([-1])
+        print("label",label.shape)
+        pred = loss.reshape([-1, len(tags_to_idx)])  
+        
+        print("pred",pred.shape)
+        
+
         softmax_pred = F.softmax(pred, axis=-1)
         predictions= paddle.argmax(softmax_pred, axis=-1)
         args=metric.compute(pred,label)
@@ -177,8 +187,7 @@ def do_train(args):
             # loss [batch_size,tags] logit [batch_size,max_seq,768]
             # tags [batch_size,max_seq] [32,1]
             
-            loss = model(input_ids, token_type_ids, tags)[0]
-            print("loss",loss)
+            loss = model(input_ids, token_type_ids, labels=tags)[0]
             loss = loss.mean()
             total_loss += loss
             loss.backward()
@@ -188,13 +197,13 @@ def do_train(args):
             lr_scheduler.step()
 
             if global_step % args.logging_steps == 0 and rank == 0:
+                evaluate(model, metric, dev_data_loader, tags_to_idx) # 验证集评估
                 end_time = time.time()
                 speed = float(args.logging_steps) / (end_time - start_time)
                 logger.info(
                     "global step %d, epoch: %d, loss: %.5f, speed: %.2f step/s"
                     % (global_step, epoch, total_loss / args.logging_steps, speed)
                 )
-                print("loss",loss)
                 start_time = time.time()
                 total_loss = 0
 
@@ -206,7 +215,7 @@ def do_train(args):
                 model_to_save.save_pretrained(output_dir)
                 tokenizer.save_pretrained(output_dir)
 
-        evaluate(model, metric, dev_data_loader, tags_to_idx) # 验证集评估
+        
 
 
 def print_arguments(args):

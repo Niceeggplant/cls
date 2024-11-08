@@ -17,23 +17,25 @@ import os
 import random
 import time
 from functools import partial
+from sklearn.metrics import confusion_matrix
+from data_process import load_dict_sim
 
 import numpy as np
 import paddle
 from data_process_sim import convert_example, create_dataloader, load_dict, read_custom_data
 from data_process import load_dict_sim
 from paddlenlp.metrics import MultiLabelsMetric
+import paddle.nn as nn
+import paddle.nn.functional as F
 
 from paddlenlp.data import Pad, Stack, Tuple
 from paddlenlp.datasets import load_dataset
 from paddlenlp.transformers import (
     ErnieCtmTokenizer,
     LinearDecayWithWarmup,
-    ErnieCtmForTokenClassification
+    ErnieCtmForTokenClassification  
 )
 from model import ErnieCtmForTokenClassification
-
-
 
 from paddlenlp.utils.log import logger
 
@@ -45,15 +47,15 @@ def parse_args():
     parser.add_argument("--data_dir", default="./sim_data", type=str, help="The input data dir, should contain train.json.")
     parser.add_argument("--init_from_ckpt", default=None, type=str, help="The path of checkpoint to be loaded.")
     parser.add_argument("--output_dir", default="./output", type=str, help="The output directory where the model predictions and checkpoints will be written.",)
-    parser.add_argument("--max_seq_len", default=128, type=int, help="The maximum total input sequence length after tokenization. Sequences longer than this will be truncated, sequences shorter will be padded.", )
-    parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
+    parser.add_argument("--max_length", default=128, type=int, help="The maximum total input sequence length after tokenization. Sequences longer than this will be truncated, sequences shorter will be padded.", )
+    parser.add_argument("--learning_rate", default=5e-4, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs", default=3, type=int, help="Total number of training epochs to perform.", )
-    parser.add_argument("--logging_steps", type=int, default=5, help="Log every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=2, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=100, help="Save checkpoint every X updates steps.")
-    parser.add_argument("--batch_size", default=32, type=int, help="Batch size per GPU/CPU for training.", )
+    parser.add_argument("--batch_size", default=1, type=int, help="Batch size per GPU/CPU for training.", )
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps. If > 0: Override warmup_proportion")
-    parser.add_argument("--warmup_proportion", default=0.0, type=float, help="Linear warmup proportion over total steps.")
+    parser.add_argument("--warmup_proportion", default=0.1, type=float, help="Linear warmup proportion over total steps.")
     parser.add_argument("--adam_epsilon", default=1e-6, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument("--seed", default=1000, type=int, help="random seed for initialization")
     parser.add_argument("--device", default="cpu", type=str, help="The device to select to train the model, is must be cpu/gpu/xpu.")
@@ -76,25 +78,32 @@ def evaluate(model, metric, data_loader,tags, tags_to_idx):
     model.eval()
     metric.reset()
     losses = []
-
+    all_predictions = []
+    all_labels = []
+   
+   
     for batch in data_loader():
-        print("pred---------")
-        input_ids, token_type_ids, seq_len, tags = batch
-        logits, loss = model(input_ids, token_type_ids, tags)[:2]
-        
+        input_ids, token_type_ids, seq_len ,tags  = batch
+        loss,logits = model(input_ids, token_type_ids, tags)[:2]
         loss = loss.mean()
         losses.append(loss.numpy())
-        pred = logits.reshape([-1, len(tags_to_idx)])
+        pred = logits.reshape([-1, len(tags_to_idx)])  
+        print("pred",pred.shape)
+        print("pred",pred.shape)
         label = tags.reshape([-1])
-        print("pred",pred)
-        print("label",label)
-        args = metric.compute(pred, label)
-        metric.update(args)  # 更新累积度
-
+        softmax_pred = F.softmax(pred, axis=-1)
+        predictions= paddle.argmax(softmax_pred, axis=-1)
+        args=metric.compute(pred,label)
+        metric.update(args) # 更新累积度
+        all_predictions.extend(predictions.numpy())
+        all_labels.extend(label.numpy())
+        
+    cm = confusion_matrix(all_labels, all_predictions)
+    print(cm)
     precision, recall, f1_score = metric.accumulate(average=None)
     print("precision, recall, f1_score ", precision, recall, f1_score)
-    logger.info("eval loss: %.5f, f1_scores: %s" % (np.mean(losses), str(f1_score)))
 
+   
     model.train()
     metric.reset()
 
@@ -111,21 +120,16 @@ def do_train(args):
         read_custom_data, filename=os.path.join(args.data_dir, "train.txt"), is_test=False, lazy=False
     ) # 训练集构建，从文件读入，需要联动数据处理过程
     dev_ds = load_dataset(read_custom_data, filename=os.path.join(args.data_dir, "dev.txt"), is_test=False, lazy=False) # 验证集构建，从文件读入，需要联动数据处理过程
-    # tags_to_idx : {'B-人物类_实体': 0, 'I-人物类_实体': 1, 'E-人物类_实体': 2,
     tags_to_idx = load_dict(os.path.join(args.data_dir, "tags.txt")) # 标签字典构建，从文件读入，分类任务可能不需要，看情况删减
-    
-
     tokenizer = ErnieCtmTokenizer.from_pretrained("wordtag") # tokenizer构建，不能改，原因是需要与预训练模型使用分词保持一致
-    # model = ErnieCtmWordtagModel.from_pretrained("wordtag", num_labels=len(tags_to_idx))  # 模型加载，模型结构是在ErnieCtmWordtagModel中指定的，与model联动
     model = ErnieCtmForTokenClassification.from_pretrained('ernie-ctm', num_labels=len(tags_to_idx))  # 模型加载，模型 = ErnieCtmForTokenClassification.from_pretrained("wordtag", num_labels=5)  # 模型加载，
-
-    trans_func = partial(convert_example, tokenizer=tokenizer, max_seq_len=args.max_seq_len, tags_to_idx=tags_to_idx)  # partial仅做易用性优化，主体逻辑依旧在预处理中
+    trans_func = partial(convert_example, tokenizer=tokenizer, max_length=args.max_length)  # partial仅做易用性优化，主体逻辑依旧在预处理中
     def batchify_fn(samples): # 分批代码，需要与trans_func中结果对应，联动预处理过程
         fn = Tuple(
             Pad(axis=0, pad_val=tokenizer.pad_token_id, dtype="int64"),  # input_ids
             Pad(axis=0, pad_val=tokenizer.pad_token_type_id, dtype="int64"),  # token_type_ids
             Stack(dtype="int64"),  # seq_len
-            Pad(axis=0, pad_val=tags_to_idx["O"], dtype="int64"),  # tags
+            Pad(axis=0, pad_val=0, dtype="int64"),  # tags
         )
         return fn(samples)
 
@@ -133,18 +137,16 @@ def do_train(args):
     train_data_loader = create_dataloader(
         train_ds, mode="train", batch_size=args.batch_size, batchify_fn=batchify_fn, trans_fn=trans_func
     )
-    print("train_data_loader",train_data_loader)
     # 测试数据实际构建成可迭代类
     dev_data_loader = create_dataloader(
         dev_ds, mode="dev", batch_size=args.batch_size, batchify_fn=batchify_fn, trans_fn=trans_func
     )
     tags_sim = load_dict_sim(os.path.join(args.data_dir, "test.txt")) # 测试自己的数据集
-
     # 模型加载，模型结构是在ErnieCtmWordtagModel中指定的，与model联动
     if args.init_from_ckpt and os.path.isfile(args.init_from_ckpt):
         state_dict = paddle.load(args.init_from_ckpt)
         model.set_dict(state_dict)
-
+    
     # 分布式设置，可以不管
     if paddle.distributed.get_world_size() > 1:
         model = paddle.DataParallel(model)
@@ -166,7 +168,7 @@ def do_train(args):
     logger.info("Total steps: %s" % num_training_steps)
     logger.info("WarmUp steps: %s" % warmup)
 
-    metric = MultiLabelsMetric(num_labels=len(tags_to_idx))  # 目的、方法、结果等
+    metric = MultiLabelsMetric(num_labels=len(tags_to_idx)) # 目的、方法、结果等
 
     total_loss = 0
     global_step = 0
@@ -175,11 +177,12 @@ def do_train(args):
         logger.info(f"Epoch {epoch} beginnig")
         start_time = time.time()
 
-        iter_data = iter(train_data_loader)
-
         for total_step, batch in enumerate(train_data_loader):
             global_step += 1
             input_ids, token_type_ids, seq_len, tags = batch
+            # loss [batch_size,tags] logit [batch_size,max_seq,768]
+            # tags [batch_size,max_seq] [32,1]
+            
             loss = model(input_ids, token_type_ids, labels=tags)[0]
             loss = loss.mean()
             total_loss += loss
@@ -198,6 +201,7 @@ def do_train(args):
                 )
                 start_time = time.time()
                 total_loss = 0
+            evaluate(model, metric, dev_data_loader,tags_sim,tags_to_idx)  # 验证集评估
 
             if (global_step % args.save_steps == 0 or global_step == num_training_steps) and rank == 0:
                 output_dir = os.path.join(args.output_dir, "model_%d" % (global_step))
@@ -207,7 +211,7 @@ def do_train(args):
                 model_to_save.save_pretrained(output_dir)
                 tokenizer.save_pretrained(output_dir)
 
-        evaluate(model, metric, dev_data_loader,tags_sim,tags_to_idx)  # 验证集评估
+        
 
 
 def print_arguments(args):
